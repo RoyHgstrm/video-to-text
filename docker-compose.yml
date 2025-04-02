@@ -19,6 +19,8 @@ services:
       - MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE:-104857600}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - WIT_AI_KEY=${WIT_AI_KEY:-}
+      - PYTHONUNBUFFERED=1
+      - TZ=UTC
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -30,6 +32,7 @@ services:
       resources:
         limits:
           memory: ${CONTAINER_MEMORY:-2G}
+          cpus: ${CONTAINER_CPUS:-1.0}
         reservations:
           memory: ${CONTAINER_MEMORY_RESERVATION:-512M}
     # Logging configuration
@@ -37,4 +40,11 @@ services:
       driver: "json-file"
       options:
         max-size: "20m"
-        max-file: "5" 
+        max-file: "5"
+    # Set shared memory size to prevent moviepy/numpy issues
+    shm_size: 256m
+    # Set ulimits for file operations
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536 
