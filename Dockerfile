@@ -5,7 +5,7 @@ WORKDIR /app
 # Install system dependencies including FFmpeg for audio processing
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
-    build-essential \
+    curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
