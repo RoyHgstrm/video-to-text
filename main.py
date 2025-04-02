@@ -282,6 +282,13 @@ def convert_to_mono_pcm_wav(audio_path):
         audio = audio.set_sample_width(2)  # 16-bit
         
         audio.export(output_path, format="wav")
+        # Explicitly close any file handles - important for Windows
+        del audio
+        
+        # Small delay to ensure file is released on Windows
+        import time
+        time.sleep(0.1)
+        
         logger.info(f"Converted audio to mono PCM using pydub: {output_path}")
         return output_path
     except Exception as e:
@@ -352,10 +359,21 @@ def transcribe_with_vosk(audio_path):
         # Ensure audio is in correct format
         mono_pcm_path = convert_to_mono_pcm_wav(audio_path)
         
-        with wave.open(mono_pcm_path, "rb") as wf:
+        # Explicitly close any existing handles to the file
+        import gc
+        gc.collect()
+        
+        # Small delay to ensure file is fully released on Windows
+        import time
+        time.sleep(0.2)
+        
+        wf = None
+        try:
+            wf = wave.open(mono_pcm_path, "rb")
             # Check if the file is in the correct format
             if wf.getnchannels() != 1 or wf.getsampwidth() != 2 or wf.getcomptype() != "NONE":
                 logger.warning("Audio file must be WAV format mono PCM, attempting to convert")
+                wf.close()
                 mono_pcm_path = convert_to_mono_pcm_wav(audio_path)
                 wf = wave.open(mono_pcm_path, "rb")
             
@@ -383,11 +401,19 @@ def transcribe_with_vosk(audio_path):
             # Join the text parts with proper spacing
             text = " ".join(text_parts)
             
-            # Clean up if needed
-            if os.path.exists(mono_pcm_path) and mono_pcm_path != audio_path:
-                os.unlink(mono_pcm_path)
-                
             return text.strip()
+        finally:
+            # Always close the file handle
+            if wf:
+                wf.close()
+                
+            # Clean up if needed - with error handling
+            try:
+                if os.path.exists(mono_pcm_path) and mono_pcm_path != audio_path:
+                    time.sleep(0.1)  # Small delay before deletion
+                    os.unlink(mono_pcm_path)
+            except Exception as e:
+                logger.warning(f"Failed to delete temporary file: {e}")
     except Exception as e:
         logger.error(f"Error in Vosk transcription: {e}")
         return None
@@ -398,27 +424,47 @@ def transcribe_with_speech_recognition(audio_path):
         # Ensure audio is in correct format
         mono_pcm_path = convert_to_mono_pcm_wav(audio_path)
         
-        with sr.AudioFile(mono_pcm_path) as source:
-            # Adjust for ambient noise
-            recognizer.adjust_for_ambient_noise(source, duration=0.5)
-            
-            # Record audio in chunks for better processing
-            audio_data = recognizer.record(source)
-            
-            # Use Google's speech recognition
-            text = recognizer.recognize_google(audio_data, language="en-US", show_all=False)
-            
-            # Clean up
-            if os.path.exists(mono_pcm_path) and mono_pcm_path != audio_path:
-                os.unlink(mono_pcm_path)
+        # Force garbage collection to release any file handles
+        import gc
+        gc.collect()
+        
+        # Small delay to ensure file is released on Windows
+        import time
+        time.sleep(0.2)
+        
+        text = None
+        source = None
+        
+        try:
+            with sr.AudioFile(mono_pcm_path) as source:
+                # Adjust for ambient noise
+                recognizer.adjust_for_ambient_noise(source, duration=0.5)
                 
-            return text
-    except sr.UnknownValueError:
-        logger.warning("Google Speech Recognition could not understand audio")
-        return None
-    except sr.RequestError as e:
-        logger.error(f"Google Speech Recognition service error: {e}")
-        return None
+                # Record audio in chunks for better processing
+                audio_data = recognizer.record(source)
+                
+                # Use Google's speech recognition
+                text = recognizer.recognize_google(audio_data, language="en-US", show_all=False)
+        except sr.UnknownValueError:
+            logger.warning("Google Speech Recognition could not understand audio")
+            return None
+        except sr.RequestError as e:
+            logger.error(f"Google Speech Recognition service error: {e}")
+            return None
+        finally:
+            # Ensure source is closed
+            del source
+            gc.collect()
+                
+        # Clean up with delay and error handling
+        try:
+            if os.path.exists(mono_pcm_path) and mono_pcm_path != audio_path:
+                time.sleep(0.1)  # Small delay before deletion
+                os.unlink(mono_pcm_path)
+        except Exception as e:
+            logger.warning(f"Failed to delete temporary file: {e}")
+            
+        return text
     except Exception as e:
         logger.error(f"Error in Speech Recognition transcription: {e}")
         return None
@@ -478,17 +524,36 @@ def process_audio_in_chunks(audio_path, transcribe_func):
             chunk_path = os.path.join(TEMP_DIR, f"chunk_{i}_{uuid.uuid4()}.wav")
             chunk.export(chunk_path, format="wav")
             chunks.append(chunk_path)
+        
+        # Force release of original audio
+        del audio
+        import gc
+        gc.collect()
+        import time
+        time.sleep(0.2)
             
-        # Process each chunk
+        # Process each chunk with added delay between chunks
         for i, chunk_path in enumerate(chunks):
             logger.info(f"Processing chunk {i+1}/{len(chunks)}")
-            chunk_transcript = transcribe_func(chunk_path)
+            
+            # Add delay between processing chunks to allow file handles to be released
+            if i > 0:
+                time.sleep(0.5)
+                
+            chunk_transcript = None
+            try:
+                chunk_transcript = transcribe_func(chunk_path)
+            except Exception as e:
+                logger.error(f"Error processing chunk {i+1}: {e}")
+                
             if chunk_transcript:
                 transcript_parts.append(chunk_transcript)
             
-            # Clean up chunk file
+            # Clean up chunk file with delay
             try:
-                os.unlink(chunk_path)
+                time.sleep(0.2)  # Wait before attempting to delete
+                if os.path.exists(chunk_path):
+                    os.unlink(chunk_path)
             except Exception as e:
                 logger.warning(f"Failed to delete chunk file: {e}")
             
