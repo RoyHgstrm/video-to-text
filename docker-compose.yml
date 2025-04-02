@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  video-to-text:
+    build: .
+    container_name: video-to-text
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./models:/app/models
+      - ./temp:/app/temp
+    environment:
+      - PRODUCTION=false
+      # Uncomment and add your Wit.ai API key if you want to use Wit.ai
+      # - WIT_AI_KEY=your_wit_ai_key_here
+    restart: unless-stopped
+    # Healthcheck to ensure service is running properly
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 30s 
