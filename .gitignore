@@ -54,6 +54,20 @@ models/
 *.mp3
 *.avi
 *.mov
+*.webm
+*.ogg
+*.m4a
+
+# Environment variables
+.env
+.env.*
+!.env.example
 
 # Logs
-*.log 
+*.log
+app.log
+logs/
+
+# Docker
+.docker/
+docker-volumes/ 

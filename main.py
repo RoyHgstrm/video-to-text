@@ -19,52 +19,83 @@ import json
 import wave
 import urllib.request
 import zipfile
+import platform
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+# Environment configuration with defaults
+PORT = int(os.environ.get("PORT", 8000))
+HOST = os.environ.get("HOST", "0.0.0.0")
+DEBUG = os.environ.get("DEBUG", "false").lower() == "true"
+MAX_UPLOAD_SIZE = int(os.environ.get("MAX_UPLOAD_SIZE", 100 * 1024 * 1024))  # 100MB default
+PRODUCTION = os.environ.get("PRODUCTION", "false").lower() == "true"
 
 # Configure logging
+logging_level = logging.DEBUG if DEBUG else logging.INFO
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging_level,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler("app.log")
+    ]
 )
 logger = logging.getLogger("video_to_text")
 
-# Create the FastAPI app
-app = FastAPI(title="Video to Text")
+# Platform detection
+SYSTEM_INFO = {
+    "os": platform.system(),
+    "version": platform.version(),
+    "python": platform.python_version(),
+    "architecture": platform.machine()
+}
+logger.info(f"Running on: {SYSTEM_INFO}")
 
-# Add CORS middleware
+# Create the FastAPI app
+app = FastAPI(
+    title="Video to Text",
+    description="Video transcription service with multiple speech recognition engines",
+    version="1.0.0"
+)
+
+# Add CORS middleware with configurable origins
+CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Set up directories
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads"))
+TEMP_DIR = os.environ.get("TEMP_DIR", os.path.join(BASE_DIR, "temp"))
+MODELS_DIR = os.environ.get("MODELS_DIR", os.path.join(BASE_DIR, "models"))
+
+# Ensure directories exist
+for directory in [UPLOAD_DIR, TEMP_DIR, MODELS_DIR]:
+    os.makedirs(directory, exist_ok=True)
+    logger.info(f"Directory: {directory}")
+
 # Set up templates
-templates = Jinja2Templates(directory="templates")
+templates_dir = os.path.join(BASE_DIR, "templates")
+if not os.path.exists(templates_dir):
+    os.makedirs(templates_dir, exist_ok=True)
+templates = Jinja2Templates(directory=templates_dir)
 
-# Create upload directory if it doesn't exist
-UPLOAD_DIR = os.path.join(os.getcwd(), "uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-logger.info(f"Upload directory: {UPLOAD_DIR}")
+# Serve static files if available
+static_dir = os.path.join(BASE_DIR, "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-# Create temp directory for audio files
-TEMP_DIR = os.path.join(os.getcwd(), "temp")
-os.makedirs(TEMP_DIR, exist_ok=True)
-logger.info(f"Temp directory: {TEMP_DIR}")
-
-# Create models directory for Vosk
-MODELS_DIR = os.path.join(os.getcwd(), "models")
-os.makedirs(MODELS_DIR, exist_ok=True)
-logger.info(f"Models directory: {MODELS_DIR}")
-
-# Global queue for processing files
+# Global processing queues and status
 processing_queue = queue.PriorityQueue()
 processing_status = {}
 user_queues = {}
@@ -84,19 +115,64 @@ recognizer.non_speaking_duration = 0.5
 
 vosk_model = None
 
+def has_command(cmd):
+    """Check if a command exists in the system path"""
+    try:
+        result = subprocess.run(
+            ["which" if SYSTEM_INFO["os"] != "Windows" else "where", cmd],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            shell=(SYSTEM_INFO["os"] == "Windows")
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+# Check for FFmpeg
+FFMPEG_AVAILABLE = has_command("ffmpeg")
+logger.info(f"FFmpeg available: {FFMPEG_AVAILABLE}")
+
 def download_vosk_model():
     """Download the Vosk model if it doesn't exist"""
-    model_url = "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
-    model_path = os.path.join(MODELS_DIR, "vosk-model-small-en-us-0.15")
-    zip_path = os.path.join(MODELS_DIR, "vosk-model-small-en-us-0.15.zip")
+    # Choose appropriate model based on system architecture
+    is_small_device = SYSTEM_INFO["architecture"] in ["armv7l", "armv6l"]
+    
+    # Use a smaller model for ARM devices
+    model_name = "vosk-model-small-en-us-0.15" if not is_small_device else "vosk-model-en-us-0.22-lgraph"
+    model_url = f"https://alphacephei.com/vosk/models/{model_name}.zip"
+    model_path = os.path.join(MODELS_DIR, model_name)
+    zip_path = os.path.join(MODELS_DIR, f"{model_name}.zip")
     
     if not os.path.exists(model_path):
-        logger.info("Downloading Vosk model...")
+        logger.info(f"Downloading Vosk model: {model_name}")
         try:
-            # Download the model
-            urllib.request.urlretrieve(model_url, zip_path)
+            # Create a directory for the model
+            os.makedirs(model_path, exist_ok=True)
+            
+            # Check if we have enough disk space (rough estimate: need 500MB free for download and extraction)
+            try:
+                if SYSTEM_INFO["os"] != "Windows":
+                    import shutil
+                    total, used, free = shutil.disk_usage(MODELS_DIR)
+                    if free < 500 * 1024 * 1024:  # 500MB in bytes
+                        logger.warning(f"Low disk space: {free // (1024 * 1024)}MB available. Model download may fail.")
+            except Exception as e:
+                logger.warning(f"Could not check disk space: {e}")
+            
+            # Download with progress logging
+            def report_progress(block_num, block_size, total_size):
+                downloaded = block_num * block_size
+                if downloaded % (5 * 1024 * 1024) == 0:  # Log every 5MB
+                    percent = 100 * downloaded / total_size if total_size > 0 else 0
+                    logger.info(f"Download progress: {downloaded // (1024 * 1024)}MB / "
+                                f"{total_size // (1024 * 1024)}MB ({percent:.1f}%)")
+            
+            logger.info(f"Downloading from {model_url}")
+            urllib.request.urlretrieve(model_url, zip_path, reporthook=report_progress)
             
             # Extract the model
+            logger.info("Extracting Vosk model...")
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(MODELS_DIR)
             
@@ -107,18 +183,43 @@ def download_vosk_model():
             return True
         except Exception as e:
             logger.error(f"Failed to download Vosk model: {e}")
+            # Clean up partial downloads
+            try:
+                if os.path.exists(zip_path):
+                    os.remove(zip_path)
+                if os.path.exists(model_path):
+                    shutil.rmtree(model_path, ignore_errors=True)
+            except Exception:
+                pass
             return False
     return True
 
 def load_vosk_model():
     """Load the Vosk model with fallback"""
     global vosk_model
-    model_path = os.path.join(MODELS_DIR, "vosk-model-small-en-us-0.15")
+    
+    # Choose appropriate model based on system architecture
+    is_small_device = SYSTEM_INFO["architecture"] in ["armv7l", "armv6l"]
+    model_name = "vosk-model-small-en-us-0.15" if not is_small_device else "vosk-model-en-us-0.22-lgraph"
+    model_path = os.path.join(MODELS_DIR, model_name)
     
     if not os.path.exists(model_path):
         if not download_vosk_model():
             logger.warning("Vosk model not available, will use Google Speech Recognition only")
             return
+    
+    try:
+        # Make sure we have enough RAM to load the model
+        # The small model needs about 500MB RAM
+        import psutil
+        available_ram = psutil.virtual_memory().available
+        if available_ram < 500 * 1024 * 1024:  # 500MB in bytes
+            logger.warning(f"Low available RAM ({available_ram // (1024 * 1024)}MB). "
+                          "Skipping Vosk model loading to avoid memory issues.")
+            return
+    except ImportError:
+        # psutil not available, proceed anyway
+        pass
     
     try:
         vosk_model = Model(model_path)
@@ -142,13 +243,13 @@ def get_user_id(request: Request):
 
 def set_user_cookie(response: Response, user_id: str):
     """Set the user ID cookie"""
-    is_production = os.environ.get('PRODUCTION', 'false').lower() == 'true'
     response.set_cookie(
         key="user_id",
         value=user_id,
         httponly=True,
-        secure=is_production,
-        samesite="lax"
+        secure=PRODUCTION,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30  # 30 days
     )
 
 def convert_to_mono_pcm_wav(audio_path):
@@ -157,29 +258,32 @@ def convert_to_mono_pcm_wav(audio_path):
         output_path = os.path.join(TEMP_DIR, f"mono_{os.path.basename(audio_path)}")
         
         # Use FFmpeg for better audio conversion if available
-        try:
-            subprocess.run([
-                'ffmpeg', '-y', 
-                '-i', audio_path, 
-                '-acodec', 'pcm_s16le', 
-                '-ac', '1', 
-                '-ar', '16000', 
-                output_path
-            ], check=True, capture_output=True)
-            logger.info(f"Converted audio to mono PCM using FFmpeg: {output_path}")
-            return output_path
-        except (subprocess.SubprocessError, FileNotFoundError):
+        if FFMPEG_AVAILABLE:
+            try:
+                subprocess.run([
+                    'ffmpeg', '-y', 
+                    '-i', audio_path, 
+                    '-acodec', 'pcm_s16le', 
+                    '-ac', '1', 
+                    '-ar', '16000', 
+                    output_path
+                ], check=True, capture_output=True)
+                logger.info(f"Converted audio to mono PCM using FFmpeg: {output_path}")
+                return output_path
+            except subprocess.SubprocessError as e:
+                logger.warning(f"FFmpeg error: {e}. Falling back to pydub.")
+        else:
             logger.info("FFmpeg not available, using pydub instead")
-            
-            # Fallback to pydub if FFmpeg command-line is not available
-            audio = AudioSegment.from_file(audio_path)
-            audio = audio.set_channels(1)  # Mono
-            audio = audio.set_frame_rate(16000)  # 16kHz
-            audio = audio.set_sample_width(2)  # 16-bit
-            
-            audio.export(output_path, format="wav")
-            logger.info(f"Converted audio to mono PCM using pydub: {output_path}")
-            return output_path
+        
+        # Fallback to pydub if FFmpeg command-line is not available
+        audio = AudioSegment.from_file(audio_path)
+        audio = audio.set_channels(1)  # Mono
+        audio = audio.set_frame_rate(16000)  # 16kHz
+        audio = audio.set_sample_width(2)  # 16-bit
+        
+        audio.export(output_path, format="wav")
+        logger.info(f"Converted audio to mono PCM using pydub: {output_path}")
+        return output_path
     except Exception as e:
         logger.error(f"Error converting audio to mono PCM: {e}")
         return audio_path
@@ -194,24 +298,46 @@ def preprocess_audio(audio_path):
         audio = AudioSegment.from_file(mono_path)
         
         # Normalize audio (adjust volume)
-        audio = audio.normalize()
+        try:
+            audio = audio.normalize()
+        except Exception as e:
+            logger.warning(f"Audio normalization failed: {e}")
         
         # Apply noise reduction
         # This is a simple high-pass filter to reduce background noise
-        audio = audio.high_pass_filter(80)
+        try:
+            audio = audio.high_pass_filter(80)
+        except Exception as e:
+            logger.warning(f"High-pass filter failed: {e}")
         
         # Apply a slight compression to even out volume
-        audio = audio.compress_dynamic_range(threshold=-20, ratio=4.0, attack=5.0, release=50.0)
+        try:
+            audio = audio.compress_dynamic_range(threshold=-20, ratio=4.0, attack=5.0, release=50.0)
+        except Exception as e:
+            logger.warning(f"Audio compression failed: {e}")
         
         # Remove silence
-        audio = audio.strip_silence(silence_len=500, silence_thresh=-35, padding=100)
+        try:
+            audio = audio.strip_silence(silence_len=500, silence_thresh=-35, padding=100)
+        except Exception as e:
+            logger.warning(f"Silence removal failed: {e}")
         
         # Save processed audio
         processed_path = os.path.join(TEMP_DIR, f"processed_{os.path.basename(audio_path)}")
-        audio.export(processed_path, format="wav", parameters=["-ac", "1", "-ar", "16000"])
-        
-        logger.info(f"Audio preprocessing completed: {processed_path}")
-        return processed_path
+        try:
+            audio.export(processed_path, format="wav", parameters=["-ac", "1", "-ar", "16000"])
+            logger.info(f"Audio preprocessing completed: {processed_path}")
+            return processed_path
+        except Exception as e:
+            logger.error(f"Error exporting processed audio: {e}")
+            # If exporting with parameters fails, try without parameters
+            try:
+                audio.export(processed_path, format="wav")
+                logger.info(f"Audio preprocessing completed (without params): {processed_path}")
+                return processed_path
+            except Exception as e2:
+                logger.error(f"Error exporting processed audio without parameters: {e2}")
+                return mono_path
     except Exception as e:
         logger.error(f"Error preprocessing audio: {e}")
         # If preprocessing fails, return the mono path or original path
@@ -361,13 +487,27 @@ def process_audio_in_chunks(audio_path, transcribe_func):
                 transcript_parts.append(chunk_transcript)
             
             # Clean up chunk file
-            os.unlink(chunk_path)
+            try:
+                os.unlink(chunk_path)
+            except Exception as e:
+                logger.warning(f"Failed to delete chunk file: {e}")
             
         # Combine all transcripts
         return " ".join(transcript_parts)
     except Exception as e:
         logger.error(f"Error processing audio in chunks: {e}")
         return transcribe_func(audio_path)  # Fall back to processing the whole file
+
+def safe_delete_file(file_path):
+    """Safely delete a file with error handling"""
+    if file_path and os.path.exists(file_path):
+        try:
+            os.unlink(file_path)
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to delete file {file_path}: {e}")
+            return False
+    return False
 
 def process_queue():
     while True:
@@ -404,6 +544,7 @@ def process_queue():
                 
                 audio_file_name = f"{uuid.uuid4()}.wav"
                 audio_path = os.path.join(TEMP_DIR, audio_file_name)
+                processed_audio_path = None
                 
                 # Extract audio from video
                 try:
@@ -480,12 +621,10 @@ def process_queue():
             finally:
                 # Clean up files
                 try:
-                    if os.path.exists(audio_path):
-                        os.unlink(audio_path)
-                    if os.path.exists(processed_audio_path) and processed_audio_path != audio_path:
-                        os.unlink(processed_audio_path)
-                    if os.path.exists(file_path):
-                        os.unlink(file_path)
+                    safe_delete_file(audio_path)
+                    if processed_audio_path and processed_audio_path != audio_path:
+                        safe_delete_file(processed_audio_path)
+                    safe_delete_file(file_path)
                 except Exception as e:
                     logger.warning(f"Failed to delete temporary files: {e}")
                 processing_queue.task_done()
@@ -497,19 +636,78 @@ def process_queue():
             except:
                 pass
 
-# Load Vosk model
-load_vosk_model()
+# Add graceful shutdown handler
+def cleanup_on_shutdown():
+    """Clean up temporary files on application shutdown"""
+    try:
+        for directory in [TEMP_DIR, UPLOAD_DIR]:
+            for file in os.listdir(directory):
+                try:
+                    path = os.path.join(directory, file)
+                    if os.path.isfile(path):
+                        os.unlink(path)
+                except Exception as e:
+                    logger.warning(f"Error deleting file during shutdown: {e}")
+    except Exception as e:
+        logger.error(f"Error during cleanup: {e}")
 
-# Start the processing thread
-threading.Thread(target=process_queue, daemon=True).start()
+# Application startup and shutdown events
+@app.on_event("startup")
+async def startup_event():
+    """Initialize the application on startup"""
+    logger.info("Starting application...")
+    
+    # Try to load Vosk model conditionally
+    try:
+        # Only attempt to load Vosk if running on a system with enough resources
+        if SYSTEM_INFO["os"] != "Windows" or DEBUG:
+            # Optional: import psutil only if it's available
+            try:
+                import psutil
+                ram_gb = psutil.virtual_memory().total / (1024**3)
+                if ram_gb < 1.0:  # Skip Vosk on systems with less than 1GB RAM
+                    logger.warning(f"System has only {ram_gb:.1f}GB RAM. Skipping Vosk model loading.")
+                else:
+                    load_vosk_model()
+            except ImportError:
+                # psutil not available, load model anyway
+                load_vosk_model()
+        else:
+            load_vosk_model()
+    except Exception as e:
+        logger.error(f"Error during Vosk model initialization: {e}")
+    
+    # Start the processing thread
+    threading.Thread(target=process_queue, daemon=True).start()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up resources on shutdown"""
+    logger.info("Shutting down application...")
+    cleanup_on_shutdown()
 
 # Routes
 @app.get("/")
 async def read_root(request: Request):
-    response = templates.TemplateResponse("index.html", {"request": request})
-    user_id = get_user_id(request)
-    set_user_cookie(response, user_id)
-    return response
+    try:
+        response = templates.TemplateResponse("index.html", {"request": request})
+        user_id = get_user_id(request)
+        set_user_cookie(response, user_id)
+        return response
+    except Exception as e:
+        logger.error(f"Error rendering index page: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for monitoring"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "system": SYSTEM_INFO,
+        "vosk_available": vosk_model is not None,
+        "ffmpeg_available": FFMPEG_AVAILABLE
+    }
 
 @app.post("/analyze/")
 async def analyze_file(file: UploadFile = File(...), request: Request = None):
@@ -522,7 +720,7 @@ async def analyze_file(file: UploadFile = File(...), request: Request = None):
             
         file_extension = os.path.splitext(filename)[1].lower()
         
-        allowed_extensions = [".mp4", ".mov", ".avi"]
+        allowed_extensions = [".mp4", ".mov", ".avi", ".webm", ".mp3", ".wav", ".m4a", ".ogg"]
         
         if file_extension not in allowed_extensions:
             raise HTTPException(
@@ -536,13 +734,38 @@ async def analyze_file(file: UploadFile = File(...), request: Request = None):
         
         timestamp = datetime.now().isoformat()
         
-        content = await file.read()
+        # Check file size before reading
+        if request.headers.get("content-length"):
+            content_length = int(request.headers.get("content-length"))
+            if content_length > MAX_UPLOAD_SIZE:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)}MB"
+                )
         
-        if not content:
-            raise HTTPException(status_code=400, detail="Empty file uploaded")
-        
+        # Read content in chunks to avoid memory issues
         with open(file_path, "wb") as buffer:
-            buffer.write(content)
+            # Read in 1MB chunks
+            chunk_size = 1024 * 1024
+            bytes_read = 0
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                bytes_read += len(chunk)
+                # Check size during read
+                if bytes_read > MAX_UPLOAD_SIZE:
+                    buffer.close()
+                    # Try to delete the partial file
+                    try:
+                        os.unlink(file_path)
+                    except:
+                        pass
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)}MB"
+                    )
+                buffer.write(chunk)
         
         if not os.path.exists(file_path):
             raise HTTPException(status_code=500, detail="Failed to save uploaded file")
@@ -598,4 +821,4 @@ async def get_status(request: Request = None):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    uvicorn.run(app, host=HOST, port=PORT) 

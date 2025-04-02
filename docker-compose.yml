@@ -4,21 +4,37 @@ services:
   video-to-text:
     build: .
     container_name: video-to-text
+    restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${PORT:-8000}:8000"
     volumes:
       - ./uploads:/app/uploads
       - ./models:/app/models
       - ./temp:/app/temp
     environment:
-      - PRODUCTION=false
-      # Uncomment and add your Wit.ai API key if you want to use Wit.ai
-      # - WIT_AI_KEY=your_wit_ai_key_here
-    restart: unless-stopped
-    # Healthcheck to ensure service is running properly
+      - PORT=8000
+      - HOST=0.0.0.0
+      - PRODUCTION=${PRODUCTION:-false}
+      - DEBUG=${DEBUG:-false}
+      - MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE:-104857600}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - WIT_AI_KEY=${WIT_AI_KEY:-}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 15s 
+      start_period: 30s
+    # Resource limits to prevent container from using too much memory
+    deploy:
+      resources:
+        limits:
+          memory: ${CONTAINER_MEMORY:-2G}
+        reservations:
+          memory: ${CONTAINER_MEMORY_RESERVATION:-512M}
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5" 

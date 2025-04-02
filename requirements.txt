@@ -1,12 +1,23 @@
+# Web framework
 fastapi>=0.68.0
 uvicorn>=0.15.0
 python-multipart>=0.0.5
 jinja2>=3.0.1
+
+# Audio and video processing
 moviepy>=1.0.3
-SpeechRecognition>=3.10.0
 pydub>=0.25.1
+
+# Speech recognition
+SpeechRecognition>=3.10.0
 vosk>=0.3.45
+
+# ML dependencies
 torch>=2.0.0
 torchaudio>=2.0.0
+
+# System monitoring
+psutil>=5.9.0
+
 # Optional dependencies
 # openai-whisper 
