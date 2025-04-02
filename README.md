@@ -8,28 +8,36 @@ A powerful FastAPI web application that extracts and transcribes speech from vid
 - Advanced audio preprocessing for better recognition:
   - Audio normalization and noise reduction
   - Silence removal and dynamic range compression
-- Multiple speech recognition engines:
-  - Offline recognition with Vosk
-  - Online recognition with Google Speech API
-  - Optional Wit.ai integration
+  - High-pass filtering to reduce background noise
+- Multiple speech recognition engines with smart fallback:
+  - Offline recognition with Vosk (for privacy and reliability)
+  - Online recognition with Google Speech API (for accuracy)
+  - Optional Wit.ai integration (for challenging audio)
 - Chunked audio processing for better results with long videos
 - Modern, responsive web interface with real-time status updates
-- Automatic cleanup of temporary files
+- Automatic cleanup of temporary files and videos after processing
 
-## Speech Recognition Details
+## How It Works
 
-This application uses a multi-tiered approach to speech recognition:
+This application employs a multi-layered approach to speech recognition:
 
-1. **Audio Preprocessing**: Each video's audio is extracted, normalized, filtered, and optimized for speech recognition
-2. **Multi-Engine Recognition**: The system tries multiple recognition engines and selects the best result
-3. **Chunked Processing**: Long videos are processed in smaller chunks for better accuracy
-4. **Smart Fallback**: If one engine fails, the system automatically tries others
+1. **Video Processing**: Extracts audio track from uploaded video files
+2. **Audio Preprocessing**: 
+   - Converts to mono 16kHz PCM format (optimal for speech recognition)
+   - Normalizes volume levels and applies noise reduction
+   - Removes silent sections and balances audio levels
+3. **Chunked Processing**: Breaks long audio into manageable segments with overlap
+4. **Multi-Engine Recognition**: 
+   - Tries multiple speech recognition engines
+   - Selects the best result based on quality metrics
+   - Falls back to alternative engines if primary fails
+5. **Results Display**: Shows transcribed text with the engine used
 
 ## Installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/video-to-text.git
+git clone https://github.com/RoyHgstrm/video-to-text.git
 cd video-to-text
 ```
 
@@ -60,24 +68,41 @@ export WIT_AI_KEY=your-wit-ai-key
 
 1. Start the application:
 ```bash
-uvicorn main:app --reload
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 2. Open your web browser and navigate to:
 ```
-http://localhost:8000
+http://localhost:8000  # Local access
+http://your-ip-address:8000  # Access from other devices on your network
 ```
 
 3. Upload a video file and click "Extract Text"
-4. View the transcription results
+4. View the transcription results in real-time
+5. Copy the text or view the transcription history
 
 ## API Endpoints
 
 - `GET /`: Web interface
-- `POST /analyze/`: Video analysis endpoint
-- `GET /status`: Status check endpoint
+- `POST /analyze/`: Video analysis and transcription endpoint
+- `GET /status`: Status check endpoint for queued/processing files
+
+## Technical Details
+
+- Built with FastAPI for high-performance async processing
+- Uses Vosk for offline speech recognition
+- Implements audio preprocessing with pydub and FFmpeg
+- Supports chunked processing for long videos
+- User-specific queues for multi-user support
+- Automatic file cleanup to preserve disk space
 
 ## Notes
 
-- The Vosk model will be automatically downloaded on first run (~50MB)
-- For optimal results, use videos with clear audio and minimal background noise 
+- The Vosk model (~50MB) will be automatically downloaded on first run
+- For optimal results, use videos with clear audio and minimal background noise
+- Processing time depends on video length and audio quality
+- For very large files, consider using a machine with more RAM
+
+## License
+
+MIT License 
