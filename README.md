@@ -2,6 +2,8 @@
 
 A powerful FastAPI web application that extracts and transcribes speech from video files using advanced speech recognition techniques. Built to work across any computing environment.
 
+![image](https://github.com/user-attachments/assets/2045ce08-1d54-4644-b18c-21d711a49da2)
+
 ## Features
 
 - Upload video files (MP4, MOV, AVI) to extract speech as text
