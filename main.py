@@ -9,7 +9,18 @@ import queue
 from pathlib import Path
 import mimetypes
 import subprocess
-from moviepy.editor import VideoFileClip
+
+# Try importing MoviePy, but provide a fallback if it fails
+try:
+    from moviepy.editor import VideoFileClip
+    MOVIEPY_AVAILABLE = True
+    logger = logging.getLogger("video_to_text")
+    logger.info("MoviePy successfully imported")
+except ImportError:
+    MOVIEPY_AVAILABLE = False
+    logger = logging.getLogger("video_to_text")
+    logger.warning("MoviePy import failed. Will use FFmpeg fallback for audio extraction")
+
 import speech_recognition as sr
 from pydub import AudioSegment
 import torch
@@ -613,10 +624,37 @@ def process_queue():
                 
                 # Extract audio from video
                 try:
-                    video = VideoFileClip(file_path)
-                    video.audio.write_audiofile(audio_path)
-                    video.close()
-                    logger.info(f"Audio extracted to {audio_path}")
+                    # Use MoviePy if available
+                    if MOVIEPY_AVAILABLE:
+                        video = VideoFileClip(file_path)
+                        video.audio.write_audiofile(audio_path)
+                        video.close()
+                        logger.info(f"Audio extracted to {audio_path}")
+                    else:
+                        # Fallback to FFmpeg direct call if available
+                        if FFMPEG_AVAILABLE:
+                            try:
+                                subprocess.run([
+                                    'ffmpeg', '-y', 
+                                    '-i', file_path, 
+                                    '-q:a', '0', 
+                                    '-map', 'a', 
+                                    audio_path
+                                ], check=True, capture_output=True)
+                                logger.info(f"Audio extracted to {audio_path} using FFmpeg directly")
+                            except subprocess.SubprocessError as e:
+                                logger.error(f"FFmpeg extraction error: {e}")
+                                raise Exception(f"Failed to extract audio: {str(e)}")
+                        else:
+                            # Last resort - try pydub
+                            try:
+                                logger.info("Attempting to extract audio with pydub")
+                                audio = AudioSegment.from_file(file_path)
+                                audio.export(audio_path, format="wav")
+                                logger.info(f"Audio extracted to {audio_path} using pydub")
+                            except Exception as e:
+                                logger.error(f"Pydub extraction error: {e}")
+                                raise Exception(f"Failed to extract audio: {str(e)}")
                 except Exception as e:
                     logger.error(f"Error extracting audio: {e}")
                     raise Exception(f"Failed to extract audio: {str(e)}")
