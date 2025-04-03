@@ -8,8 +8,14 @@
     <style>
         @media (max-width: 640px) {
             .container {
-                padding-left: 12px;
-                padding-right: 12px;
+                padding-left: 8px;
+                padding-right: 8px;
+            }
+            .text-3xl {
+                font-size: 1.5rem;
+            }
+            .p-6 {
+                padding: 1rem;
             }
         }
         
@@ -40,24 +46,66 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        .video-card {
+            transition: all 0.2s ease-in-out;
+        }
+        
+        .video-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            font-weight: 500;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            padding: 0.25rem 0.75rem;
+        }
+
+        .pagination-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 0.375rem;
+            font-weight: 500;
+            padding: 0.5rem 1rem;
+            transition: all 0.2s;
+        }
+
+        .pagination-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* For screens larger than mobile */
+        @media (min-width: 768px) {
+            .card-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+                gap: 1rem;
+            }
+        }
     </style>
 </head>
 <body class="bg-gray-100 min-h-screen">
-    <div class="container mx-auto px-4 py-8 max-w-3xl">
-        <h1 class="text-3xl font-bold text-center mb-6">Video to Text</h1>
-        <p class="text-center text-gray-600 mb-8">Upload a video file to extract the speech as text</p>
+    <div class="container mx-auto px-4 py-4 sm:py-8 max-w-4xl">
+        <h1 class="text-3xl font-bold text-center mb-4 sm:mb-6">Video to Text</h1>
+        <p class="text-center text-gray-600 mb-6 sm:mb-8">Upload a video file to extract the speech as text</p>
         
         <!-- Upload Form -->
-        <div class="bg-white rounded-lg shadow p-6 mb-6">
+        <div class="bg-white rounded-lg shadow p-4 sm:p-6 mb-6">
             <form id="uploadForm" class="space-y-4">
-                <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center file-container">
-                    <input type="file" id="fileInput" accept=".mp4,.mov,.avi">
+                <div class="border-2 border-dashed border-gray-300 rounded-lg p-4 sm:p-6 text-center file-container">
+                    <input type="file" id="fileInput" accept=".mp4,.mov,.avi,.webm,.mp3,.wav,.m4a,.ogg">
                     <div class="text-gray-600">
-                        <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                        <svg class="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
                             <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                         </svg>
-                        <p class="mt-1">Click to select a video file</p>
-                        <p class="text-sm text-gray-500">MP4, MOV, AVI</p>
+                        <p class="mt-1">Click to select a file</p>
+                        <p class="text-xs sm:text-sm text-gray-500">MP4, MOV, AVI, WEBM, MP3, WAV, M4A, OGG</p>
                     </div>
                 </div>
                 <div id="selectedFile" class="hidden text-center text-sm text-gray-600">
@@ -69,31 +117,52 @@
                     </div>
                     <p class="text-sm text-gray-600 mt-2 text-center">Uploading...</p>
                 </div>
-                <button type="submit" class="w-full bg-blue-500 text-white py-2 px-4 rounded-lg hover:bg-blue-600 transition-colors">
+                <button type="submit" class="w-full bg-blue-500 text-white py-3 px-4 rounded-lg hover:bg-blue-600 transition-colors text-base sm:text-lg font-medium">
                     Extract Text
                 </button>
             </form>
         </div>
 
         <!-- Processing List -->
-        <div class="bg-white rounded-lg shadow p-6 mb-6">
-            <h2 class="text-xl font-semibold mb-4">Your Processing Queue</h2>
-            <div id="queueStatus" class="space-y-4">
-                <p class="text-center text-gray-500">No files in queue</p>
+        <div class="bg-white rounded-lg shadow p-4 sm:p-6 mb-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-semibold">Your Processing Queue</h2>
+                <div class="flex space-x-2 text-sm">
+                    <button id="filterAll" class="px-2 py-1 rounded bg-blue-500 text-white">All</button>
+                    <button id="filterProcessing" class="px-2 py-1 rounded bg-gray-200">Processing</button>
+                    <button id="filterCompleted" class="px-2 py-1 rounded bg-gray-200">Completed</button>
+                </div>
+            </div>
+            
+            <!-- Pagination Controls -->
+            <div id="paginationControls" class="flex justify-between items-center mb-4 hidden">
+                <span class="text-sm text-gray-500">Showing <span id="pageInfo">1-5 of 10</span> files</span>
+                <div class="flex space-x-2">
+                    <button id="prevPage" class="pagination-btn bg-gray-200 hover:bg-gray-300 disabled:opacity-50" disabled>
+                        Previous
+                    </button>
+                    <button id="nextPage" class="pagination-btn bg-gray-200 hover:bg-gray-300 disabled:opacity-50">
+                        Next
+                    </button>
+                </div>
+            </div>
+            
+            <div id="queueStatus" class="space-y-3 card-grid">
+                <p class="text-center text-gray-500 col-span-full py-8">No files in queue</p>
             </div>
         </div>
 
         <!-- Transcript Results -->
-        <div id="results" class="hidden bg-white rounded-lg shadow p-6 mb-6">
+        <div id="results" class="hidden bg-white rounded-lg shadow p-4 sm:p-6 mb-6">
             <h2 class="text-xl font-semibold mb-4">Transcription Results</h2>
-            <div class="mb-4 flex justify-between items-center">
-                <div>
+            <div class="mb-4 flex flex-wrap sm:flex-nowrap justify-between items-center gap-2">
+                <div class="w-full sm:w-auto">
                     <span class="text-sm text-gray-500">From: <span id="resultFileName" class="font-medium"></span></span>
-                    <span id="recognitionEngine" class="ml-4 text-sm text-gray-500"></span>
+                    <span id="recognitionEngine" class="block sm:inline sm:ml-4 text-sm text-gray-500"></span>
                 </div>
-                <button id="copyBtn" class="text-sm bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded">Copy Text</button>
+                <button id="copyBtn" class="w-full sm:w-auto text-sm bg-gray-200 hover:bg-gray-300 px-3 py-2 rounded">Copy Text</button>
             </div>
-            <div id="transcript" class="bg-gray-50 p-4 rounded-lg text-gray-800 whitespace-pre-wrap"></div>
+            <div id="transcript" class="bg-gray-50 p-4 rounded-lg text-gray-800 whitespace-pre-wrap text-sm sm:text-base max-h-96 overflow-y-auto"></div>
             <div id="loadingIndicator" class="hidden mt-4 text-center">
                 <div class="loading-spinner mx-auto"></div>
                 <p class="mt-2 text-sm text-gray-600">Processing audio...</p>
@@ -106,6 +175,12 @@
         let updateInterval = null;
         let userId = null;
         
+        // Pagination and filtering
+        let currentPage = 1;
+        const itemsPerPage = 5;
+        let filteredItems = [];
+        let currentFilter = 'all';
+        
         // Update queue status
         async function updateStatus() {
             try {
@@ -115,7 +190,6 @@
                 userId = data.user_id;
                 
                 const queueStatus = document.getElementById('queueStatus');
-                queueStatus.innerHTML = '';
                 
                 const sortedStatus = Object.entries(data.processing_status)
                     .sort(([, a], [, b]) => {
@@ -123,69 +197,133 @@
                         return new Date(b.queued_at) - new Date(a.queued_at);
                     });
                 
-                if (sortedStatus.length === 0) {
-                    queueStatus.innerHTML = '<p class="text-center text-gray-500">No files in queue</p>';
-                    return;
+                // Filter items
+                filteredItems = sortedStatus.filter(([, status]) => {
+                    if (currentFilter === 'all') return true;
+                    if (currentFilter === 'processing') return status.status === 'queued' || status.status === 'processing';
+                    if (currentFilter === 'completed') return status.status === 'completed';
+                    return true;
+                });
+                
+                // Update pagination
+                updatePagination();
+                
+                // Display items for the current page
+                renderQueueItems();
+            } catch (error) {
+                console.error('Error updating status:', error);
+            }
+        }
+        
+        function updatePagination() {
+            const paginationControls = document.getElementById('paginationControls');
+            const pageInfo = document.getElementById('pageInfo');
+            const prevPageBtn = document.getElementById('prevPage');
+            const nextPageBtn = document.getElementById('nextPage');
+            
+            if (filteredItems.length <= itemsPerPage) {
+                paginationControls.classList.add('hidden');
+                return;
+            }
+            
+            paginationControls.classList.remove('hidden');
+            
+            const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
+            if (currentPage > totalPages) {
+                currentPage = totalPages;
+            }
+            
+            const startIndex = (currentPage - 1) * itemsPerPage + 1;
+            const endIndex = Math.min(startIndex + itemsPerPage - 1, filteredItems.length);
+            
+            pageInfo.textContent = `${startIndex}-${endIndex} of ${filteredItems.length}`;
+            
+            prevPageBtn.disabled = currentPage === 1;
+            nextPageBtn.disabled = currentPage === totalPages;
+        }
+        
+        function renderQueueItems() {
+            const queueStatus = document.getElementById('queueStatus');
+            queueStatus.innerHTML = '';
+            
+            if (filteredItems.length === 0) {
+                queueStatus.innerHTML = '<p class="text-center text-gray-500 col-span-full py-8">No files found</p>';
+                return;
+            }
+            
+            // Get items for the current page
+            const startIndex = (currentPage - 1) * itemsPerPage;
+            const endIndex = startIndex + itemsPerPage;
+            const pageItems = filteredItems.slice(startIndex, endIndex);
+            
+            pageItems.forEach(([fileId, status]) => {
+                const statusElement = document.createElement('div');
+                statusElement.className = 'video-card border rounded-lg p-3 bg-white hover:shadow-md transition';
+                
+                let statusColor = 'bg-gray-100 text-gray-800';
+                let statusText = 'Queued';
+                
+                switch (status.status) {
+                    case 'processing':
+                        statusColor = 'bg-blue-100 text-blue-800';
+                        statusText = 'Processing';
+                        break;
+                    case 'completed':
+                        statusColor = 'bg-green-100 text-green-800';
+                        statusText = 'Completed';
+                        break;
+                    case 'error':
+                        statusColor = 'bg-red-100 text-red-800';
+                        statusText = 'Error';
+                        break;
                 }
                 
-                sortedStatus.forEach(([fileId, status]) => {
-                    const statusElement = document.createElement('div');
-                    statusElement.className = 'border rounded-lg p-4';
-                    
-                    let statusColor = 'bg-gray-100';
-                    let statusText = 'Queued';
-                    
-                    switch (status.status) {
-                        case 'processing':
-                            statusColor = 'bg-blue-100';
-                            statusText = 'Processing';
-                            break;
-                        case 'completed':
-                            statusColor = 'bg-green-100';
-                            statusText = 'Completed';
-                            break;
-                        case 'error':
-                            statusColor = 'bg-red-100';
-                            statusText = 'Error';
-                            break;
-                    }
-                    
-                    const queuePosition = status.queue_position ? 
-                        `<p class="text-sm text-gray-500">Queue Position: ${status.queue_position}</p>` : '';
-                    
-                    const processingTime = status.started_at ? 
-                        `<p class="text-sm text-gray-500">Started: ${new Date(status.started_at).toLocaleString()}</p>` : '';
-                    
-                    statusElement.innerHTML = `
-                        <div class="flex justify-between items-center">
-                            <div>
-                                <p class="font-medium">${status.filename || 'Unnamed file'}</p>
-                                <p class="text-sm text-gray-600">${status.current_step || 'Waiting'}</p>
-                                ${status.file_size ? `<p class="text-sm text-gray-500">Size: ${status.file_size}</p>` : ''}
-                                ${queuePosition}
-                                ${processingTime}
-                            </div>
-                            <span class="px-3 py-1 rounded-full text-sm ${statusColor}">${statusText}</span>
+                // Format date nicely
+                let dateString = '';
+                if (status.started_at) {
+                    const date = new Date(status.started_at);
+                    dateString = date.toLocaleString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+                }
+                
+                // Truncate filename if too long
+                const filename = status.filename || 'Unnamed file';
+                const displayName = filename.length > 20 ? filename.substring(0, 18) + '...' : filename;
+                
+                statusElement.innerHTML = `
+                    <div class="flex flex-col h-full">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="font-medium text-gray-900" title="${filename}">${displayName}</h3>
+                            <span class="status-badge ${statusColor}">${statusText}</span>
+                        </div>
+                        <div class="text-xs text-gray-500 space-y-1 flex-grow">
+                            <p>${status.current_step || 'Waiting'}</p>
+                            ${status.file_size ? `<p>Size: ${status.file_size}</p>` : ''}
+                            ${dateString ? `<p>Started: ${dateString}</p>` : ''}
                         </div>
                         ${status.status === 'completed' ? `
-                            <div class="mt-4">
-                                <button onclick="showTranscript('${fileId}')" class="text-blue-500 hover:text-blue-700">
+                            <div class="mt-3 pt-2 border-t border-gray-100">
+                                <button onclick="showTranscript('${fileId}')" class="w-full text-center text-sm text-blue-500 hover:text-blue-700 font-medium py-1">
                                     View Transcript
                                 </button>
                             </div>
                         ` : ''}
                         ${status.status === 'error' ? `
-                            <div class="mt-4 text-red-600">
-                                ${status.error || 'Unknown error'}
+                            <div class="mt-3 pt-2 border-t border-gray-100">
+                                <p class="text-xs text-red-600">
+                                    ${status.error || 'Unknown error'}
+                                </p>
                             </div>
                         ` : ''}
-                    `;
-                    
-                    queueStatus.appendChild(statusElement);
-                });
-            } catch (error) {
-                console.error('Error updating status:', error);
-            }
+                    </div>
+                `;
+                
+                queueStatus.appendChild(statusElement);
+            });
         }
 
         // Show transcript
@@ -310,6 +448,10 @@
                 updateInterval = setInterval(updateStatus, 2000);
                 updateStatus();
                 
+                // Reset to first page and "all" filter to see the new upload
+                currentPage = 1;
+                setActiveFilter('all');
+                
                 document.querySelector('.container > div:nth-child(3)').scrollIntoView({ behavior: 'smooth' });
                 
             } catch (error) {
@@ -318,6 +460,54 @@
                 uploadProgress.classList.add('hidden');
             }
         });
+        
+        // Set up pagination buttons
+        document.getElementById('prevPage').addEventListener('click', function() {
+            if (currentPage > 1) {
+                currentPage--;
+                renderQueueItems();
+                updatePagination();
+            }
+        });
+        
+        document.getElementById('nextPage').addEventListener('click', function() {
+            const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
+            if (currentPage < totalPages) {
+                currentPage++;
+                renderQueueItems();
+                updatePagination();
+            }
+        });
+        
+        // Set up filter buttons
+        document.getElementById('filterAll').addEventListener('click', function() {
+            setActiveFilter('all');
+        });
+        
+        document.getElementById('filterProcessing').addEventListener('click', function() {
+            setActiveFilter('processing');
+        });
+        
+        document.getElementById('filterCompleted').addEventListener('click', function() {
+            setActiveFilter('completed');
+        });
+        
+        function setActiveFilter(filter) {
+            currentFilter = filter;
+            currentPage = 1;
+            
+            // Update UI for filter buttons
+            document.getElementById('filterAll').className = filter === 'all' ? 
+                'px-2 py-1 rounded bg-blue-500 text-white' : 'px-2 py-1 rounded bg-gray-200';
+            
+            document.getElementById('filterProcessing').className = filter === 'processing' ? 
+                'px-2 py-1 rounded bg-blue-500 text-white' : 'px-2 py-1 rounded bg-gray-200';
+            
+            document.getElementById('filterCompleted').className = filter === 'completed' ? 
+                'px-2 py-1 rounded bg-blue-500 text-white' : 'px-2 py-1 rounded bg-gray-200';
+            
+            updateStatus();
+        }
         
         // Copy transcript to clipboard
         document.getElementById('copyBtn').addEventListener('click', function() {
@@ -329,11 +519,11 @@
                         const copyBtn = document.getElementById('copyBtn');
                         const originalText = copyBtn.textContent;
                         copyBtn.textContent = 'Copied!';
-                        copyBtn.className = 'text-sm bg-green-200 px-2 py-1 rounded';
+                        copyBtn.className = 'w-full sm:w-auto text-sm bg-green-200 px-3 py-2 rounded';
                         
                         setTimeout(() => {
                             copyBtn.textContent = originalText;
-                            copyBtn.className = 'text-sm bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded';
+                            copyBtn.className = 'w-full sm:w-auto text-sm bg-gray-200 hover:bg-gray-300 px-3 py-2 rounded';
                         }, 2000);
                     })
                     .catch(err => {
